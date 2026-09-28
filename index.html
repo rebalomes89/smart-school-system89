@@ -1,3 +1,5 @@
+
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -4373,6 +4375,12 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
 
 
 <style id="fingerprint-registration-style">
+
+  .python-ai-status-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 12px}
+  .python-ai-status{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;font-size:.78rem;font-weight:800}
+  .python-ai-status.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
+  .python-ai-status.warn{background:#fff7ed;color:#9a3412;border:1px solid #fdba74}
+  .python-ai-status-note{font-size:.75rem;color:#64748b}
   .fingerprint-shell{max-width:1100px;margin:0 auto}
   .fingerprint-hero{background:linear-gradient(135deg,#111827,#1e3a8a);color:#fff;border-radius:18px;padding:18px 20px;margin-bottom:18px;box-shadow:0 10px 28px rgba(15,23,42,.16)}
   .fingerprint-hero h2{margin:0 0 6px;font-size:1.35rem}
@@ -4405,6 +4413,53 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
   @media(max-width:850px){.fingerprint-grid{grid-template-columns:1fr}.fp-finger-grid{grid-template-columns:repeat(2,1fr)}}
   @media(max-width:560px){.fp-form-grid{grid-template-columns:1fr}.fp-form-grid .full{grid-column:auto}.fp-student-preview{align-items:flex-start}.fp-photo{width:85px;height:105px}}
 </style>
+
+
+<script id="python-ai-face-bridge">
+(function(){
+  function canvasToDataUrl(video, quality=0.92){
+    if(!video || video.readyState<2 || !video.videoWidth) return "";
+    const c=document.createElement("canvas");
+    const max=1280, scale=Math.min(1,max/video.videoWidth);
+    c.width=Math.round(video.videoWidth*scale); c.height=Math.round(video.videoHeight*scale);
+    const x=c.getContext("2d"); x.drawImage(video,0,0,c.width,c.height);
+    return c.toDataURL("image/jpeg",quality);
+  }
+  window.recognizeCurrentFaceWithPython=async function(){
+    const video=document.getElementById("faceVideo") || document.getElementById("afsFaceVideo");
+    const image=canvasToDataUrl(video);
+    if(!image) return {ok:false,reason:"NO_CAMERA_FRAME"};
+    const result=await window.pythonFaceRecognize(image,{threshold:.42,require_liveness:true,top_k:3});
+    if(result?.ok){
+      const label=result.name || result.student_name || result.best_match?.name || "Siswa";
+      const score=Number(result.similarity ?? result.confidence ?? result.score ?? 0);
+      const status=document.getElementById("faceStatus");
+      if(status) status.textContent=`🧠 Python AI: ${label} • ${Math.round(score*100)}%`;
+    }
+    return result;
+  };
+})();
+</script>
+
+
+<script id="github-fastapi-diagnostics">
+(function(){
+  window.smartAttendanceDiagnostics=function(){
+    const result={
+      pageUrl:location.href,
+      protocol:location.protocol,
+      host:location.hostname,
+      githubPages:/github\.io$/i.test(location.hostname),
+      secureContext:window.isSecureContext,
+      fastApiUrl:(localStorage.getItem("pythonAiApiUrl")||""),
+      supabaseConfigured:typeof SUPABASE_URL!=="undefined" && !!SUPABASE_URL,
+      pythonReady:!!window.smartAttendancePythonAIReady
+    };
+    console.table(result);
+    return result;
+  };
+})();
+</script>
 
 </head>
 <body>
@@ -4860,7 +4915,12 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
           </div>
 
           <div id="faceStatus" class="face-status">
-          <div class="face-ai-security" id="faceAiSecurity">🔐 <strong>LEVEL 6 • HIGH ACCURACY BIOMETRIC ATTENDANCE</strong> • Face-api 128-D + InsightFace/ArcFace-family embedding + geometry + liveness + multi-template + consecutive consensus</div>Memuat sistem Face Recognition...</div>
+          <div class="face-ai-security" id="faceAiSecurity">🔐 <strong>LEVEL 6 • HIGH ACCURACY BIOMETRIC ATTENDANCE</strong> • Face-api 128-D + InsightFace/ArcFace-family embedding + geometry + liveness + multi-template + consecutive consensus</div>
+          <div class="python-ai-status-row">
+            <span id="pythonAiStatus" class="python-ai-status warn">🟠 Mengecek Python AI / FastAPI...</span>
+            <span class="python-ai-status-note">GitHub Pages → FastAPI → OpenCV + InsightFace/DeepFace → Supabase</span>
+            <button type="button" class="python-ai-config-btn" onclick="configurePythonAiBackend()">⚙️ Backend</button>
+          </div>Memuat sistem Face Recognition...</div>
           <div class="level6-panel" id="level6SecurityPanel">
             <div class="level6-title">🛡️ LEVEL 6 BIOMETRIC SECURITY ENGINE</div>
             <div class="level6-grid">
@@ -6464,6 +6524,356 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
     const SUPABASE_URL = 'https://ricewibshhoqxrdrchul.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_xHdlpc3CWqXtUaNm4vUF8A_KdWWhpw5';
     let supabaseClient = null;
+
+    // ============================================================
+    // BACKEND ARCHITECTURE
+    // GitHub Pages = FRONTEND STATIC
+    // Supabase    = DATABASE + REALTIME
+    // FastAPI     = PYTHON AI BACKEND (harus punya URL sendiri)
+    //
+    // JANGAN menganggap github.io sebagai server Python.
+    // Isi URL FastAPI setelah backend benar-benar online.
+    // Contoh: https://api.smartschoolattendance.id
+    // ============================================================
+    const GITHUB_PAGES_FRONTEND = window.location.origin;
+
+    const PYTHON_AI_API_DEFAULT =
+      localStorage.getItem("pythonAiApiUrl") ||
+      window.SMART_ATTENDANCE_FASTAPI_URL ||
+      "";
+
+    function normalizeApiBaseUrl(value){
+      return String(value || "").trim().replace(/\/+$/, "");
+    }
+
+    const PYTHON_AI_API = normalizeApiBaseUrl(PYTHON_AI_API_DEFAULT);
+
+    window.SMART_ATTENDANCE_PYTHON_AI = Object.freeze({
+      enabled: !!PYTHON_AI_API,
+      baseUrl: PYTHON_AI_API,
+      faceEndpoint: "/api/face/recognize",
+      faceEnrollEndpoint: "/api/face/enroll",
+      fingerprintEndpoint: "/api/fingerprint/register",
+      fingerprintVerifyEndpoint: "/api/fingerprint/verify",
+      attendanceEndpoint: "/api/attendance/record"
+    });
+
+    function pythonApiConfigured(){
+      return !!normalizeApiBaseUrl(PYTHON_AI_API);
+    }
+
+    async function pythonApiFetch(path, options={}, timeoutMs=6500){
+      if(!pythonApiConfigured()){
+        throw new Error(
+          "URL FastAPI belum diatur. GitHub Pages bukan server Python."
+        );
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(()=>controller.abort(), timeoutMs);
+
+      try{
+        const headers = Object.assign({
+          "Accept":"application/json"
+        }, options.headers || {});
+
+        if(options.body && !headers["Content-Type"]){
+          headers["Content-Type"]="application/json";
+        }
+
+        return await fetch(
+          PYTHON_AI_API + path,
+          Object.assign({}, options, {
+            headers,
+            signal:controller.signal,
+            mode:"cors",
+            credentials:"omit"
+          })
+        );
+      }finally{
+        clearTimeout(timer);
+      }
+    }
+
+    async function checkPythonAIHealth(){
+      const badge=document.getElementById("pythonAiStatus");
+
+      if(!pythonApiConfigured()){
+        window.smartAttendancePythonAIReady=false;
+
+        if(badge){
+          badge.textContent="⚪ FastAPI belum dikonfigurasi";
+          badge.className="python-ai-status warn";
+          badge.title=
+            "GitHub Pages sudah aktif. Masukkan URL FastAPI pada pengaturan backend.";
+        }
+
+        return {
+          ok:false,
+          configured:false,
+          reason:"FASTAPI_URL_NOT_CONFIGURED"
+        };
+      }
+
+      try{
+        const r=await pythonApiFetch("/health",{method:"GET"},4000);
+
+        if(!r.ok){
+          throw new Error("HTTP "+r.status);
+        }
+
+        const data=await r.json().catch(()=>({}));
+
+        window.smartAttendancePythonAIReady=true;
+
+        if(badge){
+          badge.textContent="🟢 Python FastAPI TERHUBUNG";
+          badge.className="python-ai-status ok";
+          badge.title=JSON.stringify(data);
+        }
+
+        return {ok:true,configured:true,data};
+
+      }catch(e){
+        window.smartAttendancePythonAIReady=false;
+
+        if(badge){
+          badge.textContent="🔴 FastAPI TIDAK TERHUBUNG";
+          badge.className="python-ai-status warn";
+          badge.title=
+            "Periksa URL FastAPI, HTTPS, server aktif, CORS, dan endpoint /health.";
+        }
+
+        return {
+          ok:false,
+          configured:true,
+          error:String(e?.message || e)
+        };
+      }
+    }
+
+    async function pythonFaceRecognize(imageData, options={}){
+      if(!imageData){
+        return {ok:false,reason:"NO_IMAGE"};
+      }
+
+      try{
+        const r=await pythonApiFetch(
+          SMART_ATTENDANCE_PYTHON_AI.faceEndpoint,
+          {
+            method:"POST",
+            body:JSON.stringify({
+              image_base64:imageData,
+              threshold:Number(options.threshold ?? 0.42),
+              require_liveness:options.require_liveness !== false,
+              top_k:Number(options.top_k ?? 3)
+            })
+          },
+          12000
+        );
+
+        const data=await r.json().catch(()=>({}));
+
+        if(!r.ok){
+          return {
+            ok:false,
+            reason:data.detail || ("HTTP "+r.status),
+            data
+          };
+        }
+
+        return Object.assign({ok:true},data);
+
+      }catch(e){
+        return {
+          ok:false,
+          reason:String(e?.message || e),
+          offline:true
+        };
+      }
+    }
+
+    async function pythonFaceEnroll(student,samples){
+      try{
+        const r=await pythonApiFetch(
+          SMART_ATTENDANCE_PYTHON_AI.faceEnrollEndpoint,
+          {
+            method:"POST",
+            body:JSON.stringify({
+              student_id:student?.id || null,
+              isn:typeof stableStudentISN==="function"
+                ? stableStudentISN(student)
+                : (student?.isn || ""),
+              name:student?.name || "",
+              class_group:student?.classGroup || student?.class_group || "",
+              samples:Array.isArray(samples) ? samples : []
+            })
+          },
+          30000
+        );
+
+        const data=await r.json().catch(()=>({}));
+
+        if(!r.ok){
+          return {
+            ok:false,
+            reason:data.detail || ("HTTP "+r.status),
+            data
+          };
+        }
+
+        return Object.assign({ok:true},data);
+
+      }catch(e){
+        return {
+          ok:false,
+          reason:String(e?.message || e),
+          offline:true
+        };
+      }
+    }
+
+    async function pythonFingerprintRegister(payload){
+      try{
+        const r=await pythonApiFetch(
+          SMART_ATTENDANCE_PYTHON_AI.fingerprintEndpoint,
+          {
+            method:"POST",
+            body:JSON.stringify(payload || {})
+          },
+          30000
+        );
+
+        const data=await r.json().catch(()=>({}));
+
+        if(!r.ok){
+          return {
+            ok:false,
+            reason:data.detail || ("HTTP "+r.status),
+            data
+          };
+        }
+
+        return Object.assign({ok:true},data);
+
+      }catch(e){
+        return {
+          ok:false,
+          reason:String(e?.message || e),
+          offline:true
+        };
+      }
+    }
+
+    async function pythonFingerprintVerify(payload){
+      try{
+        const r=await pythonApiFetch(
+          SMART_ATTENDANCE_PYTHON_AI.fingerprintVerifyEndpoint,
+          {
+            method:"POST",
+            body:JSON.stringify(payload || {})
+          },
+          15000
+        );
+
+        const data=await r.json().catch(()=>({}));
+
+        if(!r.ok){
+          return {
+            ok:false,
+            reason:data.detail || ("HTTP "+r.status),
+            data
+          };
+        }
+
+        return Object.assign({ok:true},data);
+
+      }catch(e){
+        return {
+          ok:false,
+          reason:String(e?.message || e),
+          offline:true
+        };
+      }
+    }
+
+    // ------------------------------------------------------------
+    // ADMIN / DEBUG HELPERS
+    // ------------------------------------------------------------
+    window.checkPythonAIHealth=checkPythonAIHealth;
+    window.pythonFaceRecognize=pythonFaceRecognize;
+    window.pythonFaceEnroll=pythonFaceEnroll;
+    window.pythonFingerprintRegister=pythonFingerprintRegister;
+    window.pythonFingerprintVerify=pythonFingerprintVerify;
+
+    window.getBackendStatus=function(){
+      return {
+        githubPages:window.location.protocol === "https:" &&
+                     /github\.io$/i.test(window.location.hostname),
+        frontendUrl:GITHUB_PAGES_FRONTEND,
+        fastApiConfigured:pythonApiConfigured(),
+        fastApiUrl:PYTHON_AI_API || null,
+        fastApiReady:!!window.smartAttendancePythonAIReady,
+        supabaseUrl:SUPABASE_URL
+      };
+    };
+
+    window.setPythonAiApiUrl=function(url){
+      const clean=normalizeApiBaseUrl(url);
+
+      if(clean && !/^https?:\/\/[^\/\s]+/i.test(clean)){
+        throw new Error(
+          "URL FastAPI tidak valid. Contoh: https://api.domainanda.com"
+        );
+      }
+
+      if(clean){
+        localStorage.setItem("pythonAiApiUrl",clean);
+      }else{
+        localStorage.removeItem("pythonAiApiUrl");
+      }
+
+      location.reload();
+    };
+
+    // Jalankan pengecekan setelah fungsi tersedia.
+    if(document.readyState==="loading"){
+      document.addEventListener("DOMContentLoaded",function(){
+        setTimeout(function(){
+          if(typeof window.checkPythonAIHealth==="function"){
+            window.checkPythonAIHealth();
+          }
+        },900);
+      },{once:true});
+    }else{
+      setTimeout(function(){
+        if(typeof window.checkPythonAIHealth==="function"){
+          window.checkPythonAIHealth();
+        }
+      },900);
+    }
+
+
+    window.configurePythonAiBackend=function(){
+      const current=normalizeApiBaseUrl(
+        localStorage.getItem("pythonAiApiUrl") || ""
+      );
+
+      const url=prompt(
+        "Masukkan URL Python FastAPI.\n\n" +
+        "Contoh:\nhttps://api.smartschoolattendance.id\n\n" +
+        "Kosongkan untuk menghapus konfigurasi.",
+        current
+      );
+
+      if(url===null) return;
+
+      try{
+        window.setPythonAiApiUrl(url);
+      }catch(err){
+        alert("❌ URL FastAPI tidak valid.\n\n"+(err?.message || err));
+      }
+    };
 
     let cloudReady = false;
     let cloudFaceRecords = [];
@@ -12179,7 +12589,19 @@ window.stopEnrollCamera=stopEnrollCamera;
 
 
 
-</body></html>`);
+</body>
+<!--
+SMART ATTENDANCE AI ARCHITECTURE
+Frontend : GitHub Pages (this index.html)
+Cloud DB : Supabase PostgreSQL + Realtime
+AI API   : Python FastAPI (external runtime; GitHub Pages cannot execute Python)
+Vision   : OpenCV + InsightFace/DeepFace
+Biometric: Python + vendor SDK / local fingerprint bridge
+Fallback : existing browser Face-api/Human engine remains available
+Security : never place service_role/secret keys in this file
+-->
+
+</html>`);
     w.document.close();
 
     const visibleCards=[...(grid?.querySelectorAll('.student-id-card')||[])];
