@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta id="github-pages-static-config" name="deployment" content="GitHub Pages + Supabase">
+<meta name="description" content="Smart Attendance — GitHub Pages frontend with Supabase backend">
+
   <title>Sistem Attendance List & Generator QR Siswa</title>
   
   <!-- Pustaka External -->
@@ -827,12 +830,26 @@ window.isWithinSmartAttendanceGeofence=function(lat,lng){return Number.isFinite(
       display: none;
     }
     
-    /* MODIFIKASI FITUR AKSES SISWA */
-    .admin-only { display: block; }
+    /* ============================================================
+       ACCESS VISIBILITY — KEEP LOGIN CLEAN
+       .admin-only / .student-allowed are NAV visibility helpers.
+       A .view-section must NEVER become visible merely because it
+       carries one of those role classes.
+       ============================================================ */
+    .admin-only,
+    .student-allowed { display: none !important; }
 
-    body.student-mode .admin-only { display: none !important; }
-    body.student-mode .student-allowed { display: inline-block !important; }
-    .student-allowed { display: inline-block; }
+    /* Navigation is hidden until loginSuccess() displays #navbar. */
+    #navbar .admin-only { display: block !important; }
+    #navbar .student-allowed { display: inline-block !important; }
+
+    /* Student mode never sees Administrator navigation. */
+    body.student-mode #navbar .admin-only { display: none !important; }
+
+    /* View sections are controlled ONLY by .active. */
+    .view-section { display: none !important; }
+    .view-section.active { display: block !important; }
+
     .cloud-status { margin-top: 8px; font-size: .8rem; color: #64748b; }
 
     /* =========================
@@ -4414,6 +4431,7 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
           <option value="dutyTeacherSection" data-admin-menu="1">👨‍🏫 Guru Piket / Usher</option>
           <option value="attendanceStationSection" data-admin-menu="1">📱 Attendance Station QR / Barcode</option>
           <option value="qrGeneratorSection" data-admin-menu="1">▦ Student QR Generator</option>
+          <option value="fingerprintSection" data-admin-menu="1">🖐 Fingerprint Registration</option>
         </select>
       </div>
       <div class="nav-select-wrap student-allowed">
@@ -4448,8 +4466,8 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
           <option value="attendanceStationSection">🖨️ Print QR Master</option>
         </select>
       </div>
-      <div class="nav-select-wrap admin-only">
-        <select class="nav-select" id="fingerprintMenuSelect" onchange="navigateMenu(this.value)">
+      <div class="nav-select-wrap admin-only" id="fingerprintMenuWrap">
+        <select class="nav-select" id="fingerprintMenuSelect" onchange="navigateMenu(this.value)" aria-label="Fingerprint Menu">
           <option value="">🖐 Fingerprint</option>
           <option value="fingerprintSection">📝 Registration</option>
         </select>
@@ -7321,7 +7339,7 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
       await loginSuccess({restoring:true});
       const page=getSavedActivePage();
       const allowedStudentPages=['studentProfileSection','scanSection','idCardSection'];
-      const adminPages=['dashboardSection','historySection','administratorSection','faceGallerySection','faceEnrollmentSection','qrGeneratorSection','attendanceStationSection','dutyTeacherSection','idCardSection'];
+      const adminPages=['dashboardSection','historySection','administratorSection','faceGallerySection','faceEnrollmentSection','qrGeneratorSection','attendanceStationSection','dutyTeacherSection','fingerprintSection','idCardSection'];
       const target=currentUserRole==='Siswa' ? (allowedStudentPages.includes(page)?page:'studentProfileSection') : (adminPages.includes(page)?page:'dashboardSection');
       await showSection(target,{restore:true});
       return true;
@@ -7710,7 +7728,11 @@ body.attendance-fullscreen-lock #scanAttendanceDigitalClock.visible{
         const access = await checkStudentAttendanceAccess(true);
         if (!access.allowed) { alert("Face Attendance siswa tidak dapat diakses. Pastikan lokasi sekolah terpenuhi."); return; }
       }
-      const adminSections=['administratorSection','faceGallerySection','faceEnrollmentSection','dashboardSection','historySection','qrGeneratorSection','attendanceStationSection','dutyTeacherSection'];
+      const adminSections=['administratorSection','faceGallerySection','faceEnrollmentSection','dashboardSection','historySection','qrGeneratorSection','attendanceStationSection','dutyTeacherSection','fingerprintSection'];
+      if(currentUserRole!=='Administrator' && sectionId==='fingerprintSection'){
+        alert('Menu Fingerprint hanya dapat diakses Administrator.');
+        return;
+      }
       if(currentUserRole==='Siswa' && adminSections.includes(sectionId)){ alert('Menu ini hanya untuk Administrator/Guru.'); return; }
       document.querySelectorAll(".view-section").forEach(sec => sec.classList.remove("active"));
       const targetSection=document.getElementById(sectionId);
@@ -10213,7 +10235,7 @@ window.updateUnifiedStudentMenu=updateUnifiedStudentMenu;
 function navigateMenu(sectionId) {
   if (!sectionId) return;
   showSection(sectionId);
-  ['studentProfileMenuSelect','faceMenuSelect','attendanceMenuSelect','administratorMenuSelect'].forEach(id => {
+  ['studentProfileMenuSelect','faceMenuSelect','attendanceMenuSelect','administratorMenuSelect','fingerprintMenuSelect'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -14358,7 +14380,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 (function(){
   "use strict";
 
-  const FP_BRIDGE = (localStorage.getItem("fingerprintBridgeUrl") || "http://127.0.0.1:8765").replace(/\/+$/,"");
+  const FP_BRIDGE_DEFAULT = "http://127.0.0.1:8765";
+  const FP_BRIDGE = (localStorage.getItem("fingerprintBridgeUrl") || FP_BRIDGE_DEFAULT).replace(/\/+$/,"");
   const FINGERS = [
     ["RIGHT_THUMB","Ibu Jari"],
     ["RIGHT_INDEX","Jari Telunjuk"],
@@ -14618,7 +14641,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   setInterval(()=>{if(document.getElementById("fingerprintSection"))populateStudents();},15000);
 })();
 </script>
-</body></html>
 <script id="usb-2d-scanner-final">
 (function(){
   'use strict';
@@ -14697,3 +14719,5 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();
 </script>
+
+</body></html>
